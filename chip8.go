@@ -40,7 +40,7 @@ type Chip8 struct {
 	dt byte
 	st byte
 	// stack pointer
-	sp byte
+	sp int
 
 	stack  []uint16
 	memory [4096]byte
@@ -180,7 +180,7 @@ func (c *Chip8) exec(opcode uint16) {
 		case 0x00ee:
 			c.logger.Printf("%04x: RET", opcode)
 			c.pc = c.stack[c.sp]
-			c.sp -= 1
+			c.sp = len(c.stack) - 1
 
 		default:
 			panic(fmt.Sprintf("Unrecognized opcode: %04x", opcode))
@@ -197,7 +197,9 @@ func (c *Chip8) exec(opcode uint16) {
 		addr := opcode & 0x0fff
 		c.logger.Printf("%04x: CALL %03x\n", opcode, addr)
 		c.stack = append(c.stack, c.pc)
-		c.sp += 1
+		c.sp = len(c.stack) - 1
+		c.logger.Printf("stack: %v", c.stack)
+		c.logger.Printf("sp: %d", c.sp)
 		c.pc = addr
 
 	// 3xkk: SE Vx byte (skip if equal)
