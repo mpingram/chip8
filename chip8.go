@@ -3,12 +3,19 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"golang.org/x/crypto/ssh/terminal"
+	"github.com/go-gl/gl/v3.3-core/gl"
+	"github.com/go-gl/glfw/v3.2/glfw"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
+	"runtime"
+	"time"
 )
+
+func init() {
+	runtime.LockOSThread()
+}
 
 func main() {
 	var romPath string
@@ -63,18 +70,30 @@ const NULL_OPCODE uint16 = 0x0000
 
 func (c *Chip8) Run(program []byte) {
 
-	c.logger = log.New(&c.log, "chip8:", log.Ltime|log.Lmicroseconds)
-
-	// FIXME move elsewhere
-	// -----------------
-	oldState, err := terminal.MakeRaw(0)
+	err := glfw.Init()
 	if err != nil {
 		panic(err)
 	}
+	defer glfw.Terminate()
+	window, err := glfw.CreateWindow(64, 38, "Chip-8", nil, nil)
+	if err != nil {
+		panic(err)
+	}
+	window.MakeContextCurrent()
+	err := gl.Init()
+	if err != nil {
+		panic(err)
+	}
+
+	for !window.ShouldClose() {
+		// set gl window based on Chip8 "video memory"
+
+		window.SwapBuffers()
+		glfw.PollEvents()
+	}
+
+	c.logger = log.New(&c.log, "chip8:", log.Ltime|log.Lmicroseconds)
 	defer c.log.WriteTo(os.Stdout)
-	defer c.clearDisplay()
-	defer terminal.Restore(0, oldState)
-	// ------------------
 
 	// load program into memory
 	var programStartAddr int = 0x200
@@ -90,16 +109,14 @@ func (c *Chip8) Run(program []byte) {
 		c.pc += 2
 		c.exec(opcode)
 		c.refreshDisplay()
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 
 func (c *Chip8) refreshDisplay() {
 	// draw screen onto display
 	for i := 0; i < 38; i++ {
-		fmt.Printf("%064b\n\r", c.screen[i])
 	}
-	// return cursor to origin
-	fmt.Print("\033[1;1H")
 }
 
 func (c *Chip8) clearDisplay() {
