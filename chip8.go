@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -68,6 +69,92 @@ type Chip8 struct {
 
 const NULL_OPCODE uint16 = 0x0000
 
+func makeVAO(vertices []float64) uint32 {
+	var vbo uint32
+	gl.GenBuffers(1, &vbo)
+	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
+	gl.BufferData(gl.ARRAY_BUFFER, 8*len(vertices), gl.Ptr(vertices), gl.DYNAMIC_DRAW)
+
+	var vao uint32
+	gl.GenVertexArrays(1, &vao)
+	gl.BindVertexArray(vao)
+	gl.EnableVertexAttribArray(0)
+	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 0, nil)
+
+	return vao
+}
+
+// converts chip8 screen to vertex array
+func toVertices(screen [38]uint64) []float32 {
+	vertices := []float32{-0.5, -0.5, 0.0, 0.5, -0.5, 0.0, 0.0, 0.5, 0.0}
+	return vertices
+	/*
+		// each bit that is 1 in each uint64 represents one pixel.
+		for i, row := range screen {
+			for j := 0; j < 64; j++ {
+				active := row&(j<<uint(i)) > 0
+				// we're mapping each pixel to a 10x10 pixel area,
+				// at top-left offset of 10i, 10j
+			}
+		}
+	*/
+}
+
+const vertexShaderSource = `
+#version 300 es
+
+layout (location=0) in vec3 aPos;
+
+void main()
+{
+	gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0f);
+}
+
+` + "\x00"
+
+const fragShaderSource = `
+#version 300 es
+precision mediump float;
+
+out vec4 FragColor;
+
+void main()
+{
+	FragColor = vec4(1.0f, 0.1f, 0.1f, 1.0f);
+}
+
+` + "\x00"
+
+func compileShader(source string, shaderType uint32) (uint32, error) {
+	shader := gl.CreateShader(shaderType)
+
+	csources, free := gl.Strs(source)
+	gl.ShaderSource(shader, 1, csources, nil)
+	free()
+	gl.CompileShader(shader)
+
+	var status int32
+	gl.GetShaderiv(shader, gl.COMPILE_STATUS, &status)
+	if status == gl.FALSE {
+		var logLength int32
+		gl.GetShaderiv(shader, gl.INFO_LOG_LENGTH, &logLength)
+
+		log := strings.Repeat("\x00", int(logLength+1))
+		gl.GetShaderInfoLog(shader, logLength, nil, gl.Str(log))
+
+		return 0, fmt.Errorf("failed to compile %v: %v", source, log)
+	}
+
+	return shader, nil
+}
+
+func processInput(w *glfw.Window, c *Chip8) {
+	if w.GetKey(glfw.KeyEscape) == glfw.Press {
+		w.SetShouldClose(true)
+	}
+}
+
 func (c *Chip8) Run(program []byte) {
 
 	err := glfw.Init()
@@ -75,23 +162,78 @@ func (c *Chip8) Run(program []byte) {
 		panic(err)
 	}
 	defer glfw.Terminate()
-	window, err := glfw.CreateWindow(64, 38, "Chip-8", nil, nil)
+
+	window, err := glfw.CreateWindow(640, 380, "Chip-8", nil, nil)
 	if err != nil {
 		panic(err)
 	}
+
+	glfw.WindowHint(glfw.Resizable, glfw.False)
+	glfw.WindowHint(glfw.ContextVersionMajor, 4)
+	glfw.WindowHint(glfw.ContextVersionMinor, 1)
+	glfw.WindowHint(glfw.OpenGLProfile, glfw.OpenGLCoreProfile)
+	glfw.WindowHint(glfw.OpenGLForwardCompatible, glfw.True)
+
 	window.MakeContextCurrent()
-	err := gl.Init()
+
+	err = gl.Init()
 	if err != nil {
 		panic(err)
 	}
 
-	for !window.ShouldClose() {
-		// set gl window based on Chip8 "video memory"
+	// opengl initialization
+	// ====================================
+	version := gl.GoStr(gl.GetString(gl.VERSION))
+	log.Println(version)
 
-		window.SwapBuffers()
-		glfw.PollEvents()
+	gl.Viewport(0, 0, 640, 380)
+
+	// link vertex and fragment shaders into shader program
+	// and use it for rendering
+	vertexShader, err := compileShader(vertexShaderSource, gl.VERTEX_SHADER)
+	if err != nil {
+		panic(err)
+	}
+	fragShader, err := compileShader(fragShaderSource, gl.FRAGMENT_SHADER)
+	if err != nil {
+		panic(err)
+	}
+	shaderProgram := gl.CreateProgram()
+	gl.AttachShader(shaderProgram, vertexShader)
+	gl.AttachShader(shaderProgram, fragShader)
+	gl.LinkProgram(shaderProgram)
+	// check for linking errors
+	var status int32
+	gl.GetProgramiv(shaderProgram, gl.LINK_STATUS, &status)
+	if status == gl.FALSE {
+		logLength := int32(512)
+		log := strings.Repeat("\x00", int(logLength+1))
+		gl.GetProgramInfoLog(shaderProgram, logLength, nil, gl.Str(log))
+		panic(log)
 	}
 
+	// free our shaders once we've linked them
+	gl.DeleteShader(vertexShader)
+	gl.DeleteShader(fragShader)
+
+	// initialize our vetex array buffer
+	vertices := toVertices(c.screen)
+
+	var vbo uint32
+	gl.GenBuffers(1, &vbo)
+
+	var vao uint32
+	gl.GenVertexArrays(1, &vao)
+	gl.BindVertexArray(vao)
+
+	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
+	gl.BufferData(gl.ARRAY_BUFFER, 4*len(vertices), gl.Ptr(vertices), gl.STATIC_DRAW)
+	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 4*3, nil)
+	gl.EnableVertexAttribArray(0)
+
+	// =====================================
+
+	// set up chip8 logger
 	c.logger = log.New(&c.log, "chip8:", log.Ltime|log.Lmicroseconds)
 	defer c.log.WriteTo(os.Stdout)
 
@@ -104,23 +246,46 @@ func (c *Chip8) Run(program []byte) {
 	// set chip's program counter to start of program
 	c.pc = uint16(programStartAddr)
 
-	// run the program, i.e. iterate through the program's opcodes and execute them
-	for opcode := c.readOpcode(c.pc); opcode != NULL_OPCODE; opcode = c.readOpcode(c.pc) {
+	// 'handle' errors
+	//if err := gl.GetError(); err != gl.NO_ERROR {
+	//		panic(err)
+	//	}
+
+	// MAIN LOOP
+	// -----------------
+	var opcode uint16
+	for !window.ShouldClose() {
+		// process input
+		processInput(window, c)
+
+		// clear screen
+		gl.ClearColor(0.1, 0.2, 0.1, 1.0)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+		// execute next opcode
+		opcode = c.readOpcode(c.pc)
 		c.pc += 2
 		c.exec(opcode)
-		c.refreshDisplay()
+
+		// set gl window based on Chip8 "video memory"
+		gl.UseProgram(shaderProgram)
+		gl.BindVertexArray(vao)
+		gl.DrawArrays(gl.TRIANGLES, 0, 3)
+
+		// render screen
+		window.SwapBuffers()
+
+		// sleep
 		time.Sleep(200 * time.Millisecond)
-	}
-}
+		// poll inputs
+		glfw.PollEvents()
 
-func (c *Chip8) refreshDisplay() {
-	// draw screen onto display
-	for i := 0; i < 38; i++ {
+		// 'handle' errors
+		if err := gl.GetError(); err != gl.NO_ERROR {
+			panic(err)
+		}
 	}
-}
-
-func (c *Chip8) clearDisplay() {
-	fmt.Print("\033[2J")
+	// ----------------
 }
 
 /**
