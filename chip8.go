@@ -5,35 +5,28 @@ import (
 	"fmt"
 	"github.com/go-gl/gl/v3.3-core/gl"
 	"github.com/go-gl/glfw/v3.2/glfw"
-	"io/ioutil"
 	"log"
 	"math/rand"
-	"os"
-	"runtime"
 	"strings"
 	"time"
 )
 
-func init() {
-	runtime.LockOSThread()
-}
-
-func main() {
-	var romPath string
-	if len(os.Args) < 2 {
-		//panic('Require path to Chip8 program ROM as first argument')
-		// FIXME development only
-		romPath = "./roms/Pong (1 player).ch8"
-	} else {
-		romPath = os.Args[1]
-	}
-	rom, err := ioutil.ReadFile(romPath)
-	if err != nil {
-		panic(err)
-	}
-
-	c8 := new(Chip8)
-	c8.Run(rom)
+type KeyState struct {
+	key1 bool
+	key2 bool
+	key3 bool
+	key4 bool
+	key5 bool
+	key6 bool
+	key7 bool
+	key8 bool
+	key9 bool
+	keyA bool
+	keyB bool
+	keyC bool
+	keyD bool
+	keyE bool
+	keyF bool
 }
 
 type Chip8 struct {
@@ -53,52 +46,71 @@ type Chip8 struct {
 	stack  []uint16
 	memory [4096]byte
 
-	// screen is 38x64 px; this 'clever hack' represents
+	// screen is 32x64 px; this 'clever hack' represents
 	// each row as a 64-bit binary number. Let's see if I'll
 	// regret this.
-	screen [38]uint64
+	Screen [32]uint64
 
 	// keyState stores state of keyboard as a bitfield.
 	// Keys map to the number of their corresponding bit in descending order:
 	// F E D C B A 9 8 7 6 5 4 3 2 1 0
-	keyState uint16
+	keyState KeyState
 
 	log    bytes.Buffer
 	logger *log.Logger
 }
 
-const NULL_OPCODE uint16 = 0x0000
+// converts chip8 screen to vertex array (VAO, vertex array object), with additional
+// array of the indices of the vertex array that should be rendered (EBO, element buffer object).
+func toVertices(screen *[32]uint64, screenWidth, screenHeight uint) ([]float32, []uint) {
+	var vertices []float32
+	var indices []uint
 
-func makeVAO(vertices []float64) uint32 {
-	var vbo uint32
-	gl.GenBuffers(1, &vbo)
-	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-	gl.BufferData(gl.ARRAY_BUFFER, 8*len(vertices), gl.Ptr(vertices), gl.DYNAMIC_DRAW)
+	// each bit that is 1 in each uint64 represents one pixel.
+	for i, row := range screen {
+		// DELETE
+		log.Printf("%b", row)
+		for j := uint64(0); j < 64; j++ {
+			active := row&(1<<j) != 0
+			if active {
+				// top left
+				tlX := (float32(j) - 32.0) / 32.0
+				tlY := (float32(i) - 16.0) / 16.0
+				// top right
+				trX := (float32(j) + 1 - 32.0) / 32.0
+				trY := tlY
+				// bottom left
+				blX := tlX
+				blY := (float32(i) + 1 - 16.0) / 16.0
+				// bottom right
+				brX := trX
+				brY := blY
 
-	var vao uint32
-	gl.GenVertexArrays(1, &vao)
-	gl.BindVertexArray(vao)
-	gl.EnableVertexAttribArray(0)
-	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 0, nil)
+				// index of first vertex added
+				vI := uint(len(vertices))
 
-	return vao
-}
-
-// converts chip8 screen to vertex array
-func toVertices(screen [38]uint64) []float32 {
-	vertices := []float32{-0.5, -0.5, 0.0, 0.5, -0.5, 0.0, 0.0, 0.5, 0.0}
-	return vertices
-	/*
-		// each bit that is 1 in each uint64 represents one pixel.
-		for i, row := range screen {
-			for j := 0; j < 64; j++ {
-				active := row&(j<<uint(i)) > 0
-				// we're mapping each pixel to a 10x10 pixel area,
-				// at top-left offset of 10i, 10j
+				// top-left  		 	index vI
+				// bottom-left   	index vI + 1
+				// bottom-right  	index vI + 2
+				// top-right  		index vI + 3
+				// top-left  			index vI + 4
+				// bottom-right  	index vI + 5
+				vertices = append(vertices,
+					tlX, tlY, 0.0,
+					blX, blY, 0.0,
+					brX, brY, 0.0,
+					trX, trY, 0.0,
+					tlX, tlY, 0.0,
+					brX, brY, 0.0,
+				)
+				// indices; we want to add the first four
+				// vertices, but the last two vertices are
+				// duplicates.
+				indices = append(indices, vI, vI+1, vI+2, vI+3)
 			}
 		}
-	*/
+	}
+	return vertices, indices
 }
 
 const vertexShaderSource = `
@@ -163,7 +175,7 @@ func (c *Chip8) Run(program []byte) {
 	}
 	defer glfw.Terminate()
 
-	window, err := glfw.CreateWindow(640, 380, "Chip-8", nil, nil)
+	window, err := glfw.CreateWindow(640, 320, "Chip-8", nil, nil)
 	if err != nil {
 		panic(err)
 	}
@@ -186,7 +198,7 @@ func (c *Chip8) Run(program []byte) {
 	version := gl.GoStr(gl.GetString(gl.VERSION))
 	log.Println(version)
 
-	gl.Viewport(0, 0, 640, 380)
+	gl.Viewport(0, 0, 640, 320)
 
 	// link vertex and fragment shaders into shader program
 	// and use it for rendering
@@ -216,8 +228,11 @@ func (c *Chip8) Run(program []byte) {
 	gl.DeleteShader(vertexShader)
 	gl.DeleteShader(fragShader)
 
-	// initialize our vetex array buffer
-	vertices := toVertices(c.screen)
+	// initialize our vetex array buffer and our
+	// element array buffer
+	//vertices, _ := toVertices(&c.screen, 640, 320)
+	maxVertices := 12288 // 64 x 32 'pixels', each pixel contains 6 vertices
+	var vertices []float32
 
 	var vbo uint32
 	gl.GenBuffers(1, &vbo)
@@ -227,7 +242,7 @@ func (c *Chip8) Run(program []byte) {
 	gl.BindVertexArray(vao)
 
 	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-	gl.BufferData(gl.ARRAY_BUFFER, 4*len(vertices), gl.Ptr(vertices), gl.STATIC_DRAW)
+	gl.BufferData(gl.ARRAY_BUFFER, 4*maxVertices, gl.Ptr(vertices), gl.STREAM_DRAW)
 	gl.VertexAttribPointer(0, 3, gl.FLOAT, false, 4*3, nil)
 	gl.EnableVertexAttribArray(0)
 
@@ -246,11 +261,6 @@ func (c *Chip8) Run(program []byte) {
 	// set chip's program counter to start of program
 	c.pc = uint16(programStartAddr)
 
-	// 'handle' errors
-	//if err := gl.GetError(); err != gl.NO_ERROR {
-	//		panic(err)
-	//	}
-
 	// MAIN LOOP
 	// -----------------
 	var opcode uint16
@@ -268,9 +278,16 @@ func (c *Chip8) Run(program []byte) {
 		c.exec(opcode)
 
 		// set gl window based on Chip8 "video memory"
+		vertices, _ = toVertices(&c.screen, 640, 320)
+		if len(vertices) > 0 {
+			gl.BufferData(gl.ARRAY_BUFFER, 4*len(vertices), gl.Ptr(vertices), gl.STATIC_DRAW)
+		}
 		gl.UseProgram(shaderProgram)
 		gl.BindVertexArray(vao)
-		gl.DrawArrays(gl.TRIANGLES, 0, 3)
+		numTriangles := int32(len(vertices) / 3)
+		gl.DrawArrays(gl.TRIANGLES, 0, numTriangles)
+
+		c.logger.Printf("%a", vertices)
 
 		// render screen
 		window.SwapBuffers()
@@ -298,7 +315,7 @@ func (c *Chip8) drawSprite(sprite []byte, x, y uint16) bool {
 	c.logger.Printf("drawing sprite of height %d from rows %d to %d", len(sprite), x, int(x)+len(sprite))
 	for i := 0; i < len(sprite); i++ {
 		offset := i + int(x)
-		row := c.screen[offset]
+		row := c.videoMemory[offset]
 		// shift sprite into position on screen by
 		// moving it at most 56 pixels left (if y=0),
 		// so that the sprite is the top byte of
@@ -307,7 +324,7 @@ func (c *Chip8) drawSprite(sprite []byte, x, y uint16) bool {
 		if row&spriteRow != 0 {
 			occluded = true
 		}
-		c.screen[offset] = row ^ spriteRow
+		c.videoMemory[offset] = row ^ spriteRow
 	}
 	return occluded
 }
@@ -334,8 +351,8 @@ func (c *Chip8) keyIsPressed(key byte) bool {
 }
 
 func (c *Chip8) clearScr() {
-	for i, _ := range c.screen {
-		c.screen[i] = 0
+	for i, _ := range c.videoMemory {
+		c.videoMemory[i] = 0
 	}
 }
 
