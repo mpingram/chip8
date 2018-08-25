@@ -6,7 +6,7 @@ import (
 	"github.com/go-gl/glfw/v3.2/glfw"
 	"io/ioutil"
 	"log"
-	_ "os"
+	"os"
 	"runtime"
 	"strings"
 )
@@ -54,7 +54,7 @@ func main() {
 	}
 
 	version := gl.GoStr(gl.GetString(gl.VERSION))
-	log.Println(version)
+	log.Printf("OpenGL version: %s\n", version)
 
 	gl.Viewport(0, 0, 640, 320)
 
@@ -143,14 +143,14 @@ func main() {
 
 	// =====================================
 
-	//romPath := "./roms/Pong (1 player).ch8"
-	//rom, err := ioutil.ReadFile(romPath)
-	//if err != nil {
-	//		panic(err)
-	//	}
+	romPath := "./roms/Pong (1 player).ch8"
+	rom, err := ioutil.ReadFile(romPath)
+	if err != nil {
+		panic(err)
+	}
 
-	//c8 := new(Chip8)
-	//c8.Load(rom)
+	c8 := new(Chip8)
+	c8.Load(rom)
 	for !window.ShouldClose() {
 
 		//c8.Step()
@@ -177,7 +177,7 @@ func main() {
 		}
 	}
 
-	//defer c8.Log.WriteTo(os.Stdout)
+	defer c8.Log.WriteTo(os.Stdout)
 }
 
 func compileShader(sourceBytes []byte, shaderType uint32) (uint32, error) {
