@@ -26,10 +26,8 @@ type Chip8 struct {
 	stack  []uint16
 	memory [4096]byte
 
-	// screen is 32x64 px; this 'clever hack' represents
-	// each row as a 64-bit binary number. Let's see if I'll
-	// regret this.
-	Screen [32]uint64
+	// screen is 32x64 px
+	Screen [32][64]bool
 
 	// keyState stores state of keyboard in an array of booleans.
 	// Each index in the array corresponds to one key -- ie,
@@ -58,7 +56,7 @@ func (c *Chip8) initalize() {
 	c.keyState = KeyState{}
 	c.Log = bytes.Buffer{}
 
-	c.Screen = [32]uint64{}
+	c.Screen = [32][64]bool{}
 
 	// instantiate Chip8 logger.
 	c.logger = log.New(&c.Log, "chip8:", log.Ltime|log.Lmicroseconds)
@@ -93,19 +91,42 @@ func (c *Chip8) Step() {
 * otherwise false.
  */
 func (c *Chip8) drawSprite(sprite []byte, x, y uint16) bool {
+	spriteW := 8
+	spriteH := len(sprite)
+	screenW := 64
+	screenH := 32
+
 	var occluded bool = false
-	c.logger.Printf("drawing sprite of height %d from rows %d to %d", len(sprite), x, int(x)+len(sprite))
-	for i := 0; i < len(sprite); i++ {
-		xOffset := 64 - (x % 64)
-		yOffset := i + int(y)
-		row := c.Screen[yOffset]
-		// TODO handle screen wrapping.
-		// TODO handle bounds checks.
-		spriteRow := uint64(sprite[i]) << xOffset
-		if row&spriteRow != 0 {
-			occluded = true
+	for i := 0; i < spriteH; i++ {
+		yOffset := (int(y) + i) % screenH
+		for j := 0; j < spriteW; j++ {
+			xOffset := (int(x) + j) % screenW
+			// BITSHIFTING TOMFOOLERY AHEAD
+			// ========================
+			// breakdown: sprite[i] is the current row of the sprite.
+			// The current row is a byte, where each bit in descending
+			// order represents one pixel. Because we're drawing left to
+			// right, we need to read the highest bit first. So, if j=0,
+			// we need to read bit (spriteW - j), or bit 8, the top bit.
+			// So we make a bitmask for that bit: (0x1 << (spriteW - j))
+			// and check if that bit is set sprite[i]&(0x1 << (spriteW - j)) > 0
+			pxBitmask := byte(0x1) << byte(spriteW-j)
+			px := sprite[i]&pxBitmask > 0
+			// ========================
+			// if this pixel should be active
+			if px == true {
+				// if this pixel was already activated on the screen,
+				if c.Screen[yOffset][xOffset] == true {
+					// turn off this pixel instead (an XOR pixel drawing operation)
+					px = false
+					// record the fact that this pixel overwrote another
+					occluded = true
+					c.Screen[yOffset][xOffset] = px
+				} else {
+					c.Screen[yOffset][xOffset] = px
+				}
+			}
 		}
-		c.Screen[xOffset] = row ^ spriteRow
 	}
 	return occluded
 }
@@ -128,7 +149,9 @@ func (c *Chip8) keyIsPressed(key byte) bool {
 
 func (c *Chip8) clearScr() {
 	for i, _ := range c.Screen {
-		c.Screen[i] = 0
+		for j, _ := range c.Screen[i] {
+			c.Screen[i][j] = false
+		}
 	}
 }
 
