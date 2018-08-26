@@ -9,6 +9,14 @@ import (
 
 type KeyState [16]bool
 
+type Display interface {
+	Render([32][64]bool)
+}
+
+type Input interface {
+	Poll() KeyState
+}
+
 type Chip8 struct {
 	// program counter
 	pc uint16
@@ -27,7 +35,7 @@ type Chip8 struct {
 	memory [4096]byte
 
 	// screen is 32x64 px
-	Screen [32][64]bool
+	screen [32][64]bool
 
 	// keyState stores state of keyboard in an array of booleans.
 	// Each index in the array corresponds to one key -- ie,
@@ -37,6 +45,13 @@ type Chip8 struct {
 
 	Log    bytes.Buffer
 	logger *log.Logger
+
+	clockSpeed      uint
+	drawFlag        bool
+	shouldCloseFlag bool
+
+	display Display
+	input   Input
 }
 
 func (c *Chip8) Reset() {
@@ -53,10 +68,13 @@ func (c *Chip8) initalize() {
 	c.stack = []uint16{}
 	c.memory = [4096]byte{}
 
+	c.clockSpeed = 500 // Mhz
 	c.keyState = KeyState{}
 	c.Log = bytes.Buffer{}
 
-	c.Screen = [32][64]bool{}
+	c.screen = [32][64]bool{}
+	c.drawFlag = false
+	c.shouldCloseFlag = false
 
 	// instantiate Chip8 logger.
 	c.logger = log.New(&c.Log, "chip8:", log.Ltime|log.Lmicroseconds)
@@ -67,7 +85,15 @@ func (c *Chip8) initalize() {
 	// TODO set decimal digits in memory location
 }
 
-func (c *Chip8) Load(program []byte) {
+func (c *Chip8) Stop() {
+	c.shouldCloseFlag = true
+}
+
+func (c *Chip8) shouldClose() bool {
+	return c.shouldCloseFlag
+}
+
+func (c *Chip8) Run(program []byte) {
 	// reset chip state
 	c.initalize()
 
@@ -76,13 +102,31 @@ func (c *Chip8) Load(program []byte) {
 	for i, b := range program {
 		c.memory[programStartAddr+i] = b
 	}
+
+	// render the screen first
+	//c.display.Render(c.screen)
+
+	for shouldClose := !c.shouldClose(); shouldClose; shouldClose = !c.shouldClose() {
+
+		if c.drawFlag {
+			c.display.Render(c.screen)
+			c.drawFlag = false
+		}
+
+		c.keyState = c.input.Poll()
+
+		opcode := c.readOpcode(c.pc)
+		c.pc += 2
+		c.exec(opcode)
+
+	}
 }
 
-func (c *Chip8) Step() {
-	// execute next opcode
-	opcode := c.readOpcode(c.pc)
-	c.pc += 2
-	c.exec(opcode)
+func (c *Chip8) AttachInput(input Input) {
+	c.input = input
+}
+func (c *Chip8) AttachDisplay(display Display) {
+	c.display = display
 }
 
 /**
@@ -90,7 +134,7 @@ func (c *Chip8) Step() {
 * It returns true if the sprite occluded any other pixels already on the screen,
 * otherwise false.
  */
-func (c *Chip8) drawSprite(sprite []byte, x, y uint16) bool {
+func (c *Chip8) drawSprite(sprite []byte, x, y byte) bool {
 	spriteW := 8
 	spriteH := len(sprite)
 	screenW := 64
@@ -116,30 +160,22 @@ func (c *Chip8) drawSprite(sprite []byte, x, y uint16) bool {
 			// if this pixel should be active
 			if px == true {
 				// if this pixel was already activated on the screen,
-				if c.Screen[yOffset][xOffset] == true {
+				if c.screen[yOffset][xOffset] == true {
 					// turn off this pixel instead (an XOR pixel drawing operation)
 					px = false
 					// record the fact that this pixel overwrote another
 					occluded = true
-					c.Screen[yOffset][xOffset] = px
+					c.screen[yOffset][xOffset] = px
 				} else {
-					c.Screen[yOffset][xOffset] = px
+					c.screen[yOffset][xOffset] = px
 				}
 			}
 		}
 	}
+
+	// should update screen
+	c.drawFlag = true
 	return occluded
-}
-
-func (c *Chip8) KeyDown(key byte) {
-	// take only the bottom four bits
-	k := key & 0x0f
-	c.keyState[k] = true
-}
-
-func (c *Chip8) KeyUp(key byte) {
-	k := key & 0x0f
-	c.keyState[k] = false
 }
 
 func (c *Chip8) keyIsPressed(key byte) bool {
@@ -148,9 +184,9 @@ func (c *Chip8) keyIsPressed(key byte) bool {
 }
 
 func (c *Chip8) clearScr() {
-	for i, _ := range c.Screen {
-		for j, _ := range c.Screen[i] {
-			c.Screen[i][j] = false
+	for i, _ := range c.screen {
+		for j, _ := range c.screen[i] {
+			c.screen[i][j] = false
 		}
 	}
 }
@@ -358,7 +394,7 @@ func (c *Chip8) exec(opcode uint16) {
 		for i := c.i; i < c.i+n; i++ {
 			sprite = append(sprite, c.memory[i])
 		}
-		occluded := c.drawSprite(sprite, x, y)
+		occluded := c.drawSprite(sprite, c.v[x], c.v[y])
 		if occluded {
 			c.v[0xf] = 1
 		} else {
