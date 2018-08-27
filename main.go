@@ -4,6 +4,7 @@ import (
 	_ "fmt"
 	"github.com/go-gl/glfw/v3.2/glfw"
 	"io/ioutil"
+	"os"
 	"runtime"
 )
 
@@ -43,5 +44,7 @@ func main() {
 	c8.AttachDisplay(renderer)
 	c8.AttachInput(input)
 	c8.Run(rom)
+
+	defer c8.Log.WriteTo(os.Stdout)
 
 }

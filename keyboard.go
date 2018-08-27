@@ -20,12 +20,12 @@ func (input *GLFWKeyboardInput) Poll() KeyState {
 
 	glfw.PollEvents()
 
-	// FIXME keep?
+	k := KeyState{}
 	if input.window.GetKey(glfw.KeyEscape) == glfw.Press {
+		// key at index 17 is set to power key
+		k[0x10] = true
 		input.window.SetShouldClose(true)
 	}
-
-	k := KeyState{}
 	// populate keystate
 	if input.window.GetKey(glfw.KeyQ) == glfw.Press {
 		fmt.Println("Q")

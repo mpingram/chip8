@@ -15,6 +15,7 @@ type OpenGLRenderer struct {
 	screenTexture uint32
 	vao           uint32
 	vertices      []float32
+	eboIndices    []uint32
 }
 
 func NewOpenGLRenderer(window *glfw.Window) *OpenGLRenderer {
@@ -47,6 +48,11 @@ func (o *OpenGLRenderer) init(w *glfw.Window) {
 
 	gl.Viewport(0, 0, 640, 320)
 
+	// FIXME DEBUG ONLY
+	// ------------
+	//gl.PolygonMode(gl.FRONT, gl.LINE)
+	// --------------
+
 	// link vertex and fragment shaders into shader program
 	// and use it for rendering
 	vertexShader, err := compileShader(vertexShaderSource, gl.VERTEX_SHADER)
@@ -62,7 +68,6 @@ func (o *OpenGLRenderer) init(w *glfw.Window) {
 	gl.AttachShader(o.shaderProgram, vertexShader)
 	gl.AttachShader(o.shaderProgram, fragShader)
 	gl.LinkProgram(o.shaderProgram)
-
 	// check for linking errors
 	var status int32
 	gl.GetProgramiv(o.shaderProgram, gl.LINK_STATUS, &status)
@@ -72,28 +77,12 @@ func (o *OpenGLRenderer) init(w *glfw.Window) {
 		gl.GetProgramInfoLog(o.shaderProgram, logLength, nil, gl.Str(log))
 		panic(log)
 	}
-
 	// free our shaders once we've linked them into a shader program
 	gl.DeleteShader(vertexShader)
 	gl.DeleteShader(fragShader)
 
-	// intialize a vertex buffer object -- this will hold all of the vertices
-	// we're rendering.
-	var vbo uint32
-	gl.GenBuffers(1, &vbo)
-
-	// initialize a vertex array object -- this is a convenience object that
-	// stores information about how the currently bound vertex buffer object is
-	// configured. The information that the vertex array object stores is the
-	// info about the shape of the VBO that we set in gl.VertexAttribPointer below.
-	gl.GenVertexArrays(1, &o.vao)
-	// set our new vertex array object as the active VAO
-	gl.BindVertexArray(o.vao)
-
-	// set our new vertex buffer object as the active VBO; now things we configure
-	// in gl.VertexAttribPointer will be stored to the bound VAO for later use.
-	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
-
+	// VERTICES
+	// --------------------
 	// create our vertices. These will be a simple rect (2 triangles)
 	// covering the 2 screens -- a canvas for us to render our screen 'texture'
 	// to.
@@ -102,19 +91,49 @@ func (o *OpenGLRenderer) init(w *glfw.Window) {
 		// -------------------------
 		-1.0, 1.0, 0.0, -1.0, 1.0, // top-left
 		-1.0, -1.0, 0.0, -1.0, -1.0, // bottom-left
-		1.0, -1.0, 0.0, 1.0, -1.0, // bottom-right
 		1.0, 1.0, 0.0, 1.0, 1.0, // top-right
-		-1.0, 1.0, 0.0, -1.0, 1.0, // top-left
 		1.0, -1.0, 0.0, 1.0, -1.0, // bottom-right
 	}
+	o.eboIndices = []uint32{
+		0, 1, 3, // first triangle
+		0, 3, 2, // second triangle
+	}
+
+	// initialize a vertex array object -- this is a convenience object that
+	// stores information about how the currently bound vertex buffer object is
+	// configured. The information that the vertex array object stores is the
+	// info about the shape of the VBO that we set in gl.VertexAttribPointer below.
+	gl.GenVertexArrays(1, &o.vao)
+	var vbo uint32
+	gl.GenBuffers(1, &vbo)
+	var ebo uint32
+	gl.GenBuffers(1, &ebo)
+
+	// set our new vertex array object as the active VAO
+	gl.BindVertexArray(o.vao)
 
 	// load our vertices into our vertex buffer object
+	// gl.BindBuffer call sets vbo as the active vertex buffer; now things we configure
+	// in gl.VertexAttribPointer will be stored to the bound VAO for later use.
+	gl.BindBuffer(gl.ARRAY_BUFFER, vbo)
 	gl.BufferData(
 		gl.ARRAY_BUFFER,    // load into the current array buffer
 		4*len(o.vertices),  // total number of bytes in the array to be loaded (each float32 is 4 bytes wide)
 		gl.Ptr(o.vertices), // openGL pointer to the array of vertices
 		gl.STATIC_DRAW,     // hint to openGL that we won't be changing these vertices often at all
 	)
+
+	// load the indices of the vertices we want to draw into the element buffer object
+	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo)
+	// FIXME DEBUG
+	fmt.Println(o.eboIndices)
+	gl.BufferData(
+		gl.ELEMENT_ARRAY_BUFFER, // load into current element buffer object
+		4*len(o.eboIndices),     // total number of bytes to be loaded (each uint32 is 4 bytes wide)
+		gl.Ptr(o.eboIndices),    // openGL pointer to array of indices
+		gl.STATIC_DRAW,          // hint to openGL that we won't be changing these indices often at all
+	)
+
 	// tell openGL about the shape of our vertex buffer
 	gl.VertexAttribPointer(
 		0,        // configure the vertex attribute with id 0 (location)
@@ -124,16 +143,17 @@ func (o *OpenGLRenderer) init(w *glfw.Window) {
 		5*4,      // the span of bytes of one vertex attribute is 5 float32s (3 for location attrib, 2 for texel coordinate attrib). Each float32 is 4 bytes.
 		nil,      // the offset of the first vertex attribute in the array is zero. For some reason, this requires a void pointer cast, represented in go-gl as nil.
 	)
+	gl.EnableVertexAttribArray(0)
 	gl.VertexAttribPointer(
 		1,                 // configure the vertex attribute with id 1 (texture coordinates)
 		2,                 // each vertex attribute is made of two components (in this case, st texture coordinates)
 		gl.FLOAT,          // each component is a 32bit float
 		false,             // there are no delimiters between each ser of components in the array (array is tightly packed)
 		5*4,               // the span of bytes of one vertex attribute is 5 float32s (3 for location attrib, 2 for texel coordinate attrib). Each float32 is 4 bytes.
-		gl.PtrOffset(3*4), // the offset of the first vertex attribute in the array is zero. For some reason, this requires a void pointer cast, represented in go-gl as nil.
+		gl.PtrOffset(3*4), // the offset of the first vertex attribute in the array is 12.
 	)
-	gl.EnableVertexAttribArray(0)
 	gl.EnableVertexAttribArray(1)
+	// ----------------------------
 
 	// create our screen texture
 	gl.GenTextures(1, &o.screenTexture)
@@ -168,10 +188,14 @@ func (o *OpenGLRenderer) init(w *glfw.Window) {
 	texUniform := gl.GetUniformLocation(o.shaderProgram, gl.Str("texture1\000"))
 	gl.Uniform1i(texUniform, 0)
 	// =====================================
+
+	// 'handle' errors
+	if err := gl.GetError(); err != gl.NO_ERROR {
+		panic(err)
+	}
 }
 
 func (o *OpenGLRenderer) Render(screen [32][64]bool) {
-	fmt.Printf("RENDER\n")
 
 	gl.ClearColor(0.1, 0.2, 0.1, 1.0)
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
@@ -181,6 +205,7 @@ func (o *OpenGLRenderer) Render(screen [32][64]bool) {
 
 	gl.ActiveTexture(gl.TEXTURE0)
 	gl.BindTexture(gl.TEXTURE_2D, o.screenTexture)
+
 	// replace the current texture with new texture
 	gl.TexSubImage2D(
 		gl.TEXTURE_2D,
@@ -199,8 +224,9 @@ func (o *OpenGLRenderer) Render(screen [32][64]bool) {
 	// draw the vertices in our vertex array object as triangles
 	// containing our screen-sized rectangle
 	gl.BindVertexArray(o.vao)
-	numTriangles := int32(len(o.vertices) / 3)
-	gl.DrawArrays(gl.TRIANGLES, 0, numTriangles)
+	numVerticesToDraw := int32(6)
+	gl.DrawElements(gl.TRIANGLES, numVerticesToDraw, gl.UNSIGNED_INT, gl.PtrOffset(0))
+	//gl.DrawArrays(gl.TRIANGLES, 0, numVerticesToDraw)
 
 	// render screen
 	o.window.SwapBuffers()
