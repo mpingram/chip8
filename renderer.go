@@ -125,8 +125,6 @@ func (o *OpenGLRenderer) init(w *glfw.Window) {
 
 	// load the indices of the vertices we want to draw into the element buffer object
 	gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo)
-	// FIXME DEBUG
-	fmt.Println(o.eboIndices)
 	gl.BufferData(
 		gl.ELEMENT_ARRAY_BUFFER, // load into current element buffer object
 		4*len(o.eboIndices),     // total number of bytes to be loaded (each uint32 is 4 bytes wide)

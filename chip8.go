@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-type KeyState [17]bool
+type KeyState [21]bool
 
 type Display interface {
 	Render([32][64]bool)
@@ -48,9 +48,41 @@ type Chip8 struct {
 	clockSpeed      int
 	drawFlag        bool
 	shouldCloseFlag bool
+	isPausedFlag    bool
 
 	display Display
 	input   Input
+}
+
+func (c *Chip8) DumpState() string {
+	var dump string
+
+	dump += "+"
+	for i := 0; i < 62; i++ {
+		dump += "-"
+	}
+	dump += "+\n"
+
+	for _, row := range c.screen {
+		dump += "|"
+		for _, px := range row {
+			if px {
+				dump += "*"
+			} else {
+				dump += " "
+			}
+		}
+		dump += "|"
+		dump += "\n"
+	}
+
+	dump += "+"
+	for i := 0; i < 62; i++ {
+		dump += "-"
+	}
+	dump += "+\n"
+
+	return dump
 }
 
 func (c *Chip8) Reset() {
@@ -112,12 +144,56 @@ func loadFontSprites(memory *[4096]byte, startAddress int) {
 	}
 }
 
-func (c *Chip8) Stop() {
+func (c *Chip8) TurnOff() {
 	c.shouldCloseFlag = true
+}
+
+func (c *Chip8) Pause() {
+	c.isPausedFlag = true
+}
+
+func (c *Chip8) Resume() {
+	c.isPausedFlag = false
 }
 
 func (c *Chip8) shouldClose() bool {
 	return c.shouldCloseFlag
+}
+
+func (c *Chip8) isPaused() bool {
+	return c.isPausedFlag
+}
+
+func (c *Chip8) Step() {
+
+	if c.drawFlag {
+		c.display.Render(c.screen)
+		c.drawFlag = false
+	}
+
+	c.keyState = c.input.Poll()
+
+	if c.dt != 0 {
+		c.dt--
+	}
+	if c.st != 0 {
+		c.st--
+	}
+
+	opcode := c.readOpcode(c.pc)
+	c.exec(opcode)
+
+	powerOffKeyPressed := c.keyState[0x10]
+	if powerOffKeyPressed {
+		c.shouldCloseFlag = true
+	}
+
+	pauseKeyPressed := c.keyState[0x11]
+	if pauseKeyPressed {
+		c.isPausedFlag = true
+		fmt.Printf("Paused? %a", c.isPaused())
+	}
+
 }
 
 func (c *Chip8) Run(program []byte) {
@@ -135,30 +211,27 @@ func (c *Chip8) Run(program []byte) {
 
 	for shouldClose := !c.shouldClose(); shouldClose; shouldClose = !c.shouldClose() {
 
-		if c.drawFlag {
-			c.display.Render(c.screen)
-			c.drawFlag = false
-		}
+		if c.isPaused() {
 
-		c.keyState = c.input.Poll()
+			c.keyState = c.input.Poll()
 
-		if c.dt != 0 {
-			c.dt--
-		}
-		if c.st != 0 {
-			c.st--
-		}
+			unpauseKeyPressed := c.keyState[0x12]
+			stepForwardKeyPressed := c.keyState[0x13]
+			dumpKeyPressed := c.keyState[0x14]
+			if unpauseKeyPressed {
+				// unpause
+				c.Resume()
+			} else if dumpKeyPressed {
+				fmt.Print(c.DumpState())
+			} else if stepForwardKeyPressed {
+				c.Step()
+			}
 
-		opcode := c.readOpcode(c.pc)
-		c.exec(opcode)
-
-		powerOffKeyPressed := c.keyState[0x10]
-		if powerOffKeyPressed {
-			c.shouldCloseFlag = true
+		} else {
+			c.Step()
 		}
 
 		time.Sleep(50 * time.Millisecond)
-
 	}
 
 }

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/go-gl/glfw/v3.2/glfw"
 )
 
@@ -21,18 +20,32 @@ func (input *GLFWKeyboardInput) Poll() KeyState {
 	glfw.PollEvents()
 
 	k := KeyState{}
+	// Power Off key
 	if input.window.GetKey(glfw.KeyEscape) == glfw.Press {
-		// key at index 17 is set to power key
 		k[0x10] = true
 		input.window.SetShouldClose(true)
 	}
-	// populate keystate
+	// Pause key
+	if input.window.GetKey(glfw.KeyP) == glfw.Press {
+		k[0x11] = true
+	}
+	// Unpause key
+	if input.window.GetKey(glfw.KeyLeftBracket) == glfw.Press {
+		k[0x12] = true
+	}
+	// Step key
+	if input.window.GetKey(glfw.KeyRightBracket) == glfw.Press {
+		k[0x13] = true
+	}
+	// Dump state key
+	if input.window.GetKey(glfw.KeyO) == glfw.Press {
+		k[0x14] = true
+	}
+
 	if input.window.GetKey(glfw.KeyQ) == glfw.Press {
-		fmt.Println("Q")
 		k[0x1] = true
 	}
 	if input.window.GetKey(glfw.KeyW) == glfw.Press {
-		fmt.Println("W")
 		k[0x2] = true
 	}
 	if input.window.GetKey(glfw.KeyE) == glfw.Press {
