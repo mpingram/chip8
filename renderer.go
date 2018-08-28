@@ -89,10 +89,10 @@ func (o *OpenGLRenderer) init(w *glfw.Window) {
 	o.vertices = []float32{
 		// x 	y		z  		s   t
 		// -------------------------
-		-1.0, 1.0, 0.0, -1.0, 1.0, // top-left
-		-1.0, -1.0, 0.0, -1.0, -1.0, // bottom-left
+		-1.0, 1.0, 0.0, 0.0, 1.0, // top-left
+		-1.0, -1.0, 0.0, 0.0, 0.0, // bottom-left
 		1.0, 1.0, 0.0, 1.0, 1.0, // top-right
-		1.0, -1.0, 0.0, 1.0, -1.0, // bottom-right
+		1.0, -1.0, 0.0, 1.0, 0.0, // bottom-right
 	}
 	o.eboIndices = []uint32{
 		0, 1, 3, // first triangle
@@ -210,8 +210,8 @@ func (o *OpenGLRenderer) Render(screen [32][64]bool) {
 		0,                // mipmap level 0
 		0,                // x offset
 		0,                // y offset
-		64,               // width
-		32,               // height
+		64,               // width (in BYTES??)
+		32,               // height (in BYTES??)
 		gl.RED,           // format
 		gl.UNSIGNED_BYTE, // type,
 		gl.Ptr(texData),  // data
@@ -236,16 +236,21 @@ func (o *OpenGLRenderer) Render(screen [32][64]bool) {
 }
 
 func toTextureData(screen [32][64]bool) []byte {
+
+	FG_COLOR := byte(0xFF)
+	BG_COLOR := byte(0x0F)
+
 	texData := []byte{}
-	for col, _ := range screen {
-		for row, _ := range screen[col] {
-			var pixel byte
-			if screen[col][row] == true {
-				pixel = 0xFF
+	// OpenGL reads texture data from bottom to top
+	for i := len(screen) - 1; i > -1; i-- {
+		for _, px := range screen[i] {
+			var texel byte
+			if px {
+				texel = FG_COLOR
 			} else {
-				pixel = 0x00
+				texel = BG_COLOR
 			}
-			texData = append(texData, pixel)
+			texData = append(texData, texel)
 		}
 	}
 	return texData
