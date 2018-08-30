@@ -212,9 +212,7 @@ func (c *Chip8) Run(program []byte) {
 	for shouldClose := !c.shouldClose(); shouldClose; shouldClose = !c.shouldClose() {
 
 		if c.isPaused() {
-
 			c.keyState = c.input.Poll()
-
 			unpauseKeyPressed := c.keyState[0x12]
 			stepForwardKeyPressed := c.keyState[0x13]
 			dumpKeyPressed := c.keyState[0x14]
@@ -231,7 +229,7 @@ func (c *Chip8) Run(program []byte) {
 			c.Step()
 		}
 
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(5000 * time.Microsecond)
 	}
 
 }
@@ -256,26 +254,21 @@ func (c *Chip8) drawSprite(sprite []byte, x, y byte) bool {
 
 	fmt.Printf("DRAW: x:%d y%d\n", x, y)
 
+	x = x % screenW
+	y = y % screenH
 	var occluded bool = false
 	for i := byte(0); i < spriteH; i++ {
-		yOffset := (y + i) % screenH
+		yOffset := y + i
 		for j := byte(0); j < spriteW; j++ {
-			xOffset := (x + j) % screenW
-			// BITSHIFTING TOMFOOLERY AHEAD
-			// ========================
-			// breakdown: sprite[i] is the current row of the sprite.
-			// The current row is a byte, where each bit in descending
-			// order represents one pixel. Because we're drawing left to
-			// right, we need to read the highest bit first. So, if j=0,
-			// we need to read bit (spriteW - j), or bit 8, the top bit.
-			// So we make a bitmask for that bit: (0x1 << (spriteW - j))
-			// and check if that bit is set sprite[i]&(0x1 << (spriteW - j)) > 0
-			pxBitmask := byte(0x1) << (spriteW - j)
-			px := sprite[i]&pxBitmask > 0
+			xOffset := x + j
+			spriteRowByte := sprite[i]
+			pxBitmask := byte(0x1) << (spriteW - (j + 1))
+			px := spriteRowByte&pxBitmask > 0
 			// ========================
 			// if this pixel should be active
-			if px == true {
-				// if this pixel was already activated on the screen,
+			isOnScreen := xOffset < screenW && yOffset < screenH
+			if px == true && isOnScreen {
+				// if this pixel was already activated,
 				if c.screen[yOffset][xOffset] == true {
 					// turn off this pixel instead (an XOR pixel drawing operation)
 					px = false
@@ -449,11 +442,14 @@ func (c *Chip8) exec(opcode uint16) {
 			c.v[x] = c.v[x] ^ c.v[y]
 			c.pc += 2
 
-		// 8xy4: ADD Vx Vy (add Vx Vy, assign result to Vx)
+		// 8xy4: ADD Vx Vy (add Vx Vy, assign result to Vx, set Vf if carry)
 		case 0x4:
 			x := opcode & 0x0f00 >> 8
 			y := opcode & 0x00f0 >> 4
 			c.logger.Printf("%04x: ADD V%x V%x\n", opcode, x, y)
+			if (x + y) > 255 {
+				c.v[0xf] = 1
+			}
 			c.v[x] = c.v[x] + c.v[y]
 			c.pc += 2
 
@@ -545,6 +541,7 @@ func (c *Chip8) exec(opcode uint16) {
 		}
 		occluded := c.drawSprite(sprite, c.v[x], c.v[y])
 		if occluded {
+			fmt.Printf("\n\n\n\nOccluded my duded\n\n\n\n")
 			c.v[0xf] = 1
 		} else {
 			c.v[0xf] = 0
