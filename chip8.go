@@ -54,7 +54,7 @@ type Chip8 struct {
 	input   Input
 }
 
-func (c *Chip8) DumpState() string {
+func (c *Chip8) String() string {
 	var dump string
 
 	dump += "+"
@@ -220,7 +220,7 @@ func (c *Chip8) Run(program []byte) {
 				// unpause
 				c.Resume()
 			} else if dumpKeyPressed {
-				fmt.Print(c.DumpState())
+				fmt.Print(c)
 			} else if stepForwardKeyPressed {
 				c.Step()
 			}
