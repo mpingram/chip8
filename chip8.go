@@ -85,27 +85,44 @@ func (c *Chip8) String() string {
 	return dump
 }
 
+type Chip8State struct {
+	// program counter
+	PC uint16
+	// address register
+	I uint16
+	// data registers
+	V [16]byte
+	// delay and sound timers.
+	// Both delay and sound timers are registers that are decremented at 60hz once set.
+	DT byte
+	ST byte
+	Stack  []uint16
+	Memory [4096]byte
+	// screen is 32x64 px
+	Screen [32][64]bool
+	// keyState stores state of keyboard in an array of booleans.
+	// Each index in the array corresponds to one key -- ie,
+	// index 0 = '0', index 16 = 'F'. If the value of the element
+	// at a key's index is true, the key is pressed.
+	KeyState KeyState
+	ClockSpeed      int
+}
+
 /**
 * Snapshot returns a static copy of the Chip8 CPU at the moment the method is called.
  */
-func (c *Chip8) Snapshot() Chip8 {
-	return Chip8{
-		pc:              c.pc,
-		i:               c.i,
-		v:               c.v,
-		dt:              c.dt,
-		st:              c.st,
-		stack:           c.stack,
-		memory:          c.memory,
-		screen:          c.screen,
-		keyState:        c.keyState,
-		Log:             c.Log,
-		clockSpeed:      c.clockSpeed,
-		drawFlag:        c.drawFlag,
-		shouldCloseFlag: c.shouldCloseFlag,
-		isPausedFlag:    c.isPausedFlag,
-		display:         c.display,
-		input:           c.input}
+func (c *Chip8) Snapshot() Chip8State {
+	return Chip8State{
+		PC:              c.pc,
+		I:               c.i,
+		V:               c.v,
+		DT:              c.dt,
+		ST:              c.st,
+		Stack:           c.stack,
+		Memory:          c.memory,
+		Screen:          c.screen,
+		KeyState:        c.keyState,
+		ClockSpeed:      c.clockSpeed,
 }
 
 func (c *Chip8) Reset() {
