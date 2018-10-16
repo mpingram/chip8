@@ -85,6 +85,29 @@ func (c *Chip8) String() string {
 	return dump
 }
 
+/**
+* Snapshot returns a static copy of the Chip8 CPU at the moment the method is called.
+ */
+func (c *Chip8) Snapshot() Chip8 {
+	return Chip8{
+		pc:              c.pc,
+		i:               c.i,
+		v:               c.v,
+		dt:              c.dt,
+		st:              c.st,
+		stack:           c.stack,
+		memory:          c.memory,
+		screen:          c.screen,
+		keyState:        c.keyState,
+		Log:             c.Log,
+		clockSpeed:      c.clockSpeed,
+		drawFlag:        c.drawFlag,
+		shouldCloseFlag: c.shouldCloseFlag,
+		isPausedFlag:    c.isPausedFlag,
+		display:         c.display,
+		input:           c.input}
+}
+
 func (c *Chip8) Reset() {
 	c.initalize()
 }
@@ -135,9 +158,9 @@ func loadFontSprites(memory *[4096]byte, startAddress int) {
 		0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
 		0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 	}
-	// 16 glyphs, each consist of five bytes of data
+	NUM_GLYPHS := 16
 	glyphSize := 5
-	numBytes := glyphSize * 16
+	numBytes := glyphSize * NUM_GLYPHS
 	for i := startAddress; i < startAddress+numBytes; i++ {
 		offset := startAddress + i
 		memory[offset] = fontSpriteData[i]
