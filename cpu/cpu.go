@@ -8,6 +8,53 @@ import (
 	"time"
 )
 
+const stackAddress uint16 = 0xEA0
+const videoMemoryAddress uint16 = 0xF00
+const highestMemoryAddress uint16 = 0xFFF
+
+// Chip8 represents an emulated Chip-8 CPU. Not that the Chip-8 was ever a real physical
+// computer with a CPU, but writing this emulator has taught me that sometimes it's fun to pretend.
+//
+// To run a program or a game on the Chip-8, first connect your keyboard (Chip8.ConnectKeyboard) and
+// your speaker (Chip8.ConnectSpeaker). Unless you enjoy interacting with computers in a
+// more philosophical way, you'll also want to set up some kind of screen to display the contents
+// of the Chip-8's video memory. You can do this by using a video adapter that reads the video
+// memory directly using Chip8.ReadVideoMemory(). One or two video adapters (OpenGL and [soon] WebGL)
+// come out of the box in this repository -- or feel free to write your own!
+//
+// Lastly, go ahead run your program with Chip8.Run(programSource).
+//
+// If you do have that philosophical inclination and you want to poke around at the inner workings
+// of the Chip8, there are a bunch of methods that give you far greater control over the fine-grained
+// operation of the chip, letting you start and stop the CPU, inspect its state, and execute a single
+// instruction at a time.
+type Chip8 struct {
+	// program counter
+	pc uint16
+	// address register
+	i uint16
+	// data registers
+	v [16]byte
+	// delay and sound timers.
+	// Both delay and sound timers are registers that are decremented at 60hz once set.
+	dt byte
+	st byte
+
+	// stack pointer
+	sp     uint16
+	memory [4096]byte
+
+	Log    bytes.Buffer
+	logger *log.Logger
+
+	// FIXME figure out what this even means
+	clockSpeed    float64
+	isStoppedFlag bool
+
+	speaker Speaker
+	input   Keyboard
+}
+
 const eofInstruction = 0x0000
 
 // TODO add 'Compatibility mode'? for that one instruction that gets implemented in one
@@ -62,53 +109,6 @@ type Speaker interface {
 	StopSound()
 }
 
-// Chip8 represents an emulated Chip-8 CPU. Not that the Chip-8 was ever a real physical
-// computer with a CPU, but writing this emulator has taught me that sometimes it's fun to pretend.
-//
-// To run a program or a game on the Chip-8, first connect your keyboard (Chip8.ConnectKeyboard) and
-// your speaker (Chip8.ConnectSpeaker). Unless you enjoy interacting with computers in a
-// more philosophical way, you'll also want to set up some kind of screen to display the contents
-// of the Chip-8's video memory. You can do this by using a video adapter that reads the video
-// memory directly using Chip8.ReadVideoMemory(). One or two video adapters (OpenGL and [soon] WebGL)
-// come out of the box in this repository -- or feel free to write your own!
-//
-// Lastly, go ahead run your program with Chip8.Run(programSource).
-//
-// If you do have that philosophical inclination and you want to poke around at the inner workings
-// of the Chip8, there are a bunch of methods that give you far greater control over the fine-grained
-// operation of the chip, letting you start and stop the CPU, inspect its state, and execute a single
-// instruction at a time.
-type Chip8 struct {
-	// program counter
-	pc uint16
-	// address register
-	i uint16
-	// data registers
-	v [16]byte
-	// delay and sound timers.
-	// Both delay and sound timers are registers that are decremented at 60hz once set.
-	dt byte
-	st byte
-
-	stack []uint16
-	// TODO include the stack and video memory in the same RAM, so that we get
-	// bug-for-bug compatibility with the real deal
-	memory [4096]byte
-
-	// screen is 64x32 px (32 rows of 8 bytes; each byte is a pixel.)
-	screen [32 * 8]byte
-
-	Log    bytes.Buffer
-	logger *log.Logger
-
-	// FIXME figure out what this even means
-	clockSpeed    float64
-	isStoppedFlag bool
-
-	speaker Speaker
-	input   Keyboard
-}
-
 // Chip8State represents a read-only snapshot of the internal state of the Chip-8 CPU and RAM.
 //
 // It copies the stack and video memory into their own fields for convenience, so you don't have
@@ -122,10 +122,10 @@ type Chip8State struct {
 	V             [16]byte
 	DT            byte
 	ST            byte
-	Stack         []uint16
 	Memory        [4096]byte
+	Stack         []byte
+	VideoMemory   []byte
 	MemoryDiagram string
-	VideoMemory   [32 * 8]byte
 	ClockSpeed    float64
 }
 
@@ -152,8 +152,8 @@ type Chip8State struct {
 // CRT TV it was connected to could display. I think! So take it with a grain of salt.
 // I've never even looked at any of these computers except online. I'm writing an emulator
 // for an interpreter that ran on forgotten hardware that was made twenty years before I was born.
-func (c *Chip8) ReadVideoMemory() [32 * 8]byte {
-	return c.screen
+func (c *Chip8) ReadVideoMemory() []byte {
+	return c.memory[videoMemoryAddress : videoMemoryAddress+255]
 }
 
 // ConnectKeyboard connects a hexadecimal keyboard input to the Chip8 CPU.
@@ -220,9 +220,8 @@ func (c *Chip8) Reset() {
 	c.v = [16]byte{}
 	c.dt = 0x00
 	c.st = 0x00
-	c.stack = []uint16{}
+	c.sp = stackAddress
 	c.memory = [4096]byte{}
-	c.screen = [32 * 8]byte{}
 
 	// This is the clock speed of the COSMAC VIP, the computer
 	// the Chip-8 interpreter was first written for.
@@ -248,40 +247,52 @@ func (c *Chip8) Start() {
 	// Only begin the CPU loop if Chip8 CPU is currently stopped.
 	if c.IsStopped() {
 		c.isStoppedFlag = false
+		// TODO start delay and sound timers
 		// Run the CPU loop until CPU is stopped.
 		for !c.IsStopped() {
-
-			// TODO figure out how channels work here
-			// decrement delay timer at 60hz
-			// FIXME at 60hz
-			if c.dt > 0 {
-				c.dt--
-			}
-			// decrement sound timer at 60hz
-			// FIXME at 60hz
-			if c.st > 0 {
-				c.st--
-			} else {
-				c.speaker.StopSound()
-			}
-
-			// if haven't reached end of program,
-			// execute next instruction in program.
-			opcode := c.readOpcode(c.pc)
-			if opcode == eofInstruction {
-				c.isStoppedFlag = true
-			} else {
-				// exec handles moving the program counter.
-				c.exec(opcode)
-			}
-
-			// FIXME figure out how to implement this
-			time.Sleep(5000 * time.Microsecond)
-
-			// decrement meta-clock
-			// FIXME what dude?
+			c.cycle()
 		}
 	}
+}
+
+func (c *Chip8) cycle() {
+	// TODO figure out how channels should work here. Probably I should pass them as dependencies to cycle()?
+
+	// decrement delay timer at 60hz
+	// FIXME at 60hz
+	if c.dt > 0 {
+		c.dt--
+	}
+	// decrement sound timer at 60hz
+	// FIXME at 60hz
+	if c.st > 0 {
+		c.st--
+		// tell the speaker to stop playing if we reached
+		// the end of the sound timer on this cycle.
+		if c.st == 0 {
+			c.speaker.StopSound()
+		}
+	}
+	// if haven't reached end of program,
+	// execute next instruction in program.
+	opcode := c.readOpcode(c.pc)
+	if opcode == eofInstruction {
+		c.isStoppedFlag = true
+	} else {
+		// exec handles moving the program counter.
+		c.exec(opcode)
+	}
+
+	// FIXME figure out how to implement this
+	time.Sleep(5000 * time.Microsecond)
+}
+
+func (c *Chip8) startClock() {
+	// TODO implement
+}
+
+func (c *Chip8) stopClock() {
+	// TODO implement
 }
 
 // Stop halts the Chip8 CPU after the currently executing instruction finishes.
@@ -289,6 +300,7 @@ func (c *Chip8) Start() {
 // While the CPU is in a stopped state, further calls to Stop have no effect.
 func (c *Chip8) Stop() {
 	c.isStoppedFlag = true
+	// FIXME stop timers
 }
 
 // IsStopped returns true if the Chip8 CPU is in a stopped state
@@ -306,7 +318,13 @@ func (c *Chip8) IsStopped() bool {
 // If the Chip8 CPU is currently paused, Step executes the next program instruction and pauses
 // the Chip8 CPU.
 func (c *Chip8) Step() {
-	// TODO implement
+	// stop CPU if currently running
+	c.Stop()
+	// we want the clock to be running so the delay and sound timers work properly
+	c.startClock()
+	// do one cycle
+	c.cycle()
+	c.stopClock()
 }
 
 // Snapshot returns a static copy of the Chip8 CPU at the moment the method is called.
@@ -317,10 +335,10 @@ func (c *Chip8) Snapshot() Chip8State {
 		V:             c.v,
 		DT:            c.dt,
 		ST:            c.st,
-		Stack:         c.stack,
+		Stack:         c.memory[stackAddress:c.sp],
 		Memory:        c.memory,
 		MemoryDiagram: "FIXME:NotImplemented",
-		VideoMemory:   c.screen,
+		VideoMemory:   c.memory[videoMemoryAddress:highestMemoryAddress],
 		ClockSpeed:    c.clockSpeed}
 }
 
@@ -435,34 +453,51 @@ func (c *Chip8) drawSprite(sprite []byte, x, y byte) bool {
 	// (invert it) and set the 'occluded' flag to true.
 	var occluded = false
 	for i, spriteByte := range sprite {
-		xOffset := x / 8 // this is integer division
-		yOffset := (y + byte(i)) * 8
+		xOffset := uint16(x / 8)
+		yOffset := uint16((y + byte(i)) * 8)
 		if isByteAligned := x%8 == 0; isByteAligned {
-			offset := yOffset + xOffset
-			screenByte := c.screen[offset]
+			offset := videoMemoryAddress + yOffset + xOffset
+			screenByte := c.memory[offset]
 			// if spriteByte and screenByte have an active pixel in the same place,
 			// spriteByte occluded an active pixel.
 			occluded = spriteByte&screenByte != 0
-			c.screen[offset] = spriteByte ^ screenByte
+			c.memory[offset] = spriteByte ^ screenByte
 
 		} else {
 			spriteLeftByte := spriteByte >> x % 8
 			spriteRightByte := spriteByte << (8 - (x % 8))
 
-			leftOffset := yOffset + xOffset
-			rightOffset := yOffset + ((xOffset + 1) % 8)
-			screenLeftByte := c.screen[leftOffset]
-			screenRightByte := c.screen[rightOffset]
+			leftOffset := videoMemoryAddress + yOffset + xOffset
+			rightOffset := videoMemoryAddress + yOffset + ((xOffset + 1) % 8)
+			screenLeftByte := c.memory[leftOffset]
+			screenRightByte := c.memory[rightOffset]
 			// if spriteByte and screenByte have an active pixel in the same place,
 			// spriteByte occluded an active pixel.
 			occluded = spriteLeftByte&screenLeftByte != 0 ||
 				spriteRightByte&screenRightByte != 0
-			c.screen[leftOffset] = spriteLeftByte ^ screenLeftByte
-			c.screen[rightOffset] = spriteRightByte ^ screenRightByte
+			c.memory[leftOffset] = spriteLeftByte ^ screenLeftByte
+			c.memory[rightOffset] = spriteRightByte ^ screenRightByte
 		}
 	}
 
 	return occluded
+}
+
+func (c *Chip8) stackPush(addr uint16) {
+	high := byte(addr >> 8)
+	low := byte(addr & 0x00FF)
+	c.memory[c.sp] = high
+	c.memory[c.sp+1] = low
+	c.sp += 2
+}
+
+func (c *Chip8) stackPop() uint16 {
+	high := c.memory[c.sp]
+	low := c.memory[c.sp+1]
+	if c.sp > stackAddress {
+		c.sp -= 2
+	}
+	return uint16(high)<<8 | uint16(low)
 }
 
 func (c *Chip8) exec(opcode uint16) {
@@ -482,20 +517,18 @@ func (c *Chip8) exec(opcode uint16) {
 		// 00E0: CLS (clear)
 		case 0x00e0:
 			c.logger.Printf("%04x: CLS", opcode)
-			for i := 0; i < len(c.screen); i++ {
-				c.screen[i] = 0x0
+			// zero out all bytes in video memory
+			for i := videoMemoryAddress; i <= highestMemoryAddress; i++ {
+				c.memory[i] = 0x0
 			}
 			c.pc += 2
 
 		// 00EE: RET (return)
 		case 0x00ee:
 			c.logger.Printf("%04x: RET", opcode)
-			last := len(c.stack) - 1
-			c.pc = c.stack[last]
-			// pop last element off of stack
-			c.stack = c.stack[:last]
-			c.logger.Printf("stack: %v", c.stack)
-			// move to next instruction
+			c.pc = c.stackPop()
+			// we've gone back to the location of the original CALL instruction;
+			// proceed past it to the next instruction.
 			c.pc += 2
 
 		default:
@@ -512,8 +545,7 @@ func (c *Chip8) exec(opcode uint16) {
 	case 0x2:
 		addr := opcode & 0x0fff
 		c.logger.Printf("%04x: CALL %03x\n", opcode, addr)
-		c.stack = append(c.stack, c.pc)
-		c.logger.Printf("stack: %v", c.stack)
+		c.stackPush(c.pc)
 		c.pc = addr
 
 	// 3xkk: SE Vx byte (skip if equal)
