@@ -47,8 +47,10 @@ type Chip8 struct {
 	Log    bytes.Buffer
 	logger *log.Logger
 
-	// FIXME figure out what this even means
-	clockSpeed    float64
+	speed int
+	stop  chan (struct{})
+	// FIXME comprehend this
+	clock         chan (time.Time)
 	isStoppedFlag bool
 
 	speaker Speaker
@@ -126,7 +128,7 @@ type Chip8State struct {
 	Stack         []byte
 	VideoMemory   []byte
 	MemoryDiagram string
-	ClockSpeed    float64
+	Speed         int
 }
 
 // ReadVideoMemory returns an array of 256 bytes that represent the 64x32px Chip8 screen
@@ -198,7 +200,6 @@ func (c *Chip8) Run(program []byte) error {
 // memory is [FIXME yyy] kb with the first 0x1FF bytes traditionally reserved for the
 // Chip8 interpreter code, the built-in decimal digit sprites, and the video memory.)
 //
-// TODO add bounds checking
 func (c *Chip8) Load(program []byte) error {
 	// load program into memory
 	var programStartAddr = 0x200
@@ -223,9 +224,7 @@ func (c *Chip8) Reset() {
 	c.sp = stackAddress
 	c.memory = [4096]byte{}
 
-	// This is the clock speed of the COSMAC VIP, the computer
-	// the Chip-8 interpreter was first written for.
-	c.clockSpeed = 1.7609 // Mhz
+	c.speed = 60 // number of instructions to execute per second
 	c.Log = bytes.Buffer{}
 
 	// Chip8 begins life in stopped state.
@@ -247,60 +246,26 @@ func (c *Chip8) Start() {
 	// Only begin the CPU loop if Chip8 CPU is currently stopped.
 	if c.IsStopped() {
 		c.isStoppedFlag = false
-		// TODO start delay and sound timers
 		// Run the CPU loop until CPU is stopped.
-		for !c.IsStopped() {
-			c.cycle()
+		for {
+			select {
+			case <-c.stop:
+				return
+				//case <-c.clock:
+				//		c.cycle()
+			}
 		}
 	}
-}
-
-func (c *Chip8) cycle() {
-	// TODO figure out how channels should work here. Probably I should pass them as dependencies to cycle()?
-
-	// decrement delay timer at 60hz
-	// FIXME at 60hz
-	if c.dt > 0 {
-		c.dt--
-	}
-	// decrement sound timer at 60hz
-	// FIXME at 60hz
-	if c.st > 0 {
-		c.st--
-		// tell the speaker to stop playing if we reached
-		// the end of the sound timer on this cycle.
-		if c.st == 0 {
-			c.speaker.StopSound()
-		}
-	}
-	// if haven't reached end of program,
-	// execute next instruction in program.
-	opcode := c.readOpcode(c.pc)
-	if opcode == eofInstruction {
-		c.isStoppedFlag = true
-	} else {
-		// exec handles moving the program counter.
-		c.exec(opcode)
-	}
-
-	// FIXME figure out how to implement this
-	time.Sleep(5000 * time.Microsecond)
-}
-
-func (c *Chip8) startClock() {
-	// TODO implement
-}
-
-func (c *Chip8) stopClock() {
-	// TODO implement
 }
 
 // Stop halts the Chip8 CPU after the currently executing instruction finishes.
 // To resume a stopped Chip8, call its Start() method.
 // While the CPU is in a stopped state, further calls to Stop have no effect.
 func (c *Chip8) Stop() {
-	c.isStoppedFlag = true
-	// FIXME stop timers
+	if !c.IsStopped() {
+		close(c.stop)
+		c.isStoppedFlag = true
+	}
 }
 
 // IsStopped returns true if the Chip8 CPU is in a stopped state
@@ -320,11 +285,34 @@ func (c *Chip8) IsStopped() bool {
 func (c *Chip8) Step() {
 	// stop CPU if currently running
 	c.Stop()
-	// we want the clock to be running so the delay and sound timers work properly
-	c.startClock()
 	// do one cycle
 	c.cycle()
-	c.stopClock()
+}
+
+func (c *Chip8) cycle() {
+
+	// decrement delay timer
+	if c.dt > 0 {
+		c.dt--
+	}
+	// decrement sound timer
+	if c.st > 0 {
+		c.st--
+		// tell the speaker to stop playing if we reached
+		// the end of the sound timer on this cycle.
+		if c.st == 0 {
+			c.speaker.StopSound()
+		}
+	}
+	// if haven't reached end of program,
+	// execute next instruction in program.
+	opcode := c.readOpcode(c.pc)
+	if opcode == eofInstruction {
+		c.Stop()
+	} else {
+		// exec will handle incrementing and/or moving the program counter.
+		c.exec(opcode)
+	}
 }
 
 // Snapshot returns a static copy of the Chip8 CPU at the moment the method is called.
@@ -339,7 +327,7 @@ func (c *Chip8) Snapshot() Chip8State {
 		Memory:        c.memory,
 		MemoryDiagram: "FIXME:NotImplemented",
 		VideoMemory:   c.memory[videoMemoryAddress:highestMemoryAddress],
-		ClockSpeed:    c.clockSpeed}
+		Speed:         c.speed}
 }
 
 func loadFontSprites(memory *[4096]byte, startAddress int) {
