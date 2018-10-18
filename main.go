@@ -2,10 +2,12 @@ package main
 
 import (
 	_ "fmt"
-	"github.com/go-gl/glfw/v3.2/glfw"
 	"io/ioutil"
 	"os"
 	"runtime"
+
+	"github.com/go-gl/glfw/v3.2/glfw"
+	"github.com/mpingram/chip8/cpu"
 )
 
 func init() {
@@ -40,7 +42,7 @@ func main() {
 		panic(err)
 	}
 
-	c8 := new(Chip8)
+	c8 := new(cpu.Chip8)
 	c8.AttachDisplay(renderer)
 	c8.AttachInput(input)
 	c8.Run(rom)

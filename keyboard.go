@@ -19,6 +19,29 @@ func (input *GLFWKeyboardInput) Poll() KeyState {
 
 	glfw.PollEvents()
 
+	// copied from cpu; this is where it should go tho
+	// META CONTROL LOOP
+	// ===
+	// read and execute control key inputs
+	/*
+		switch c.input.Poll() {
+		case PAUSE_KEY:
+			c.Pause()
+		case UNPAUSE_KEY:
+			c.Start()
+		case POWEROFF_KEY:
+			c.shouldCloseFlag = true
+		case STEP_KEY
+			// only step forward a paused CPU to avoid a double-step
+			if c.IsPaused() {
+				c.Step()
+			}
+		case DUMPSTATE_KEY
+			c.logger.Print(c)
+		}
+		// ===
+	*/
+
 	k := KeyState{}
 	// Power Off key
 	if input.window.GetKey(glfw.KeyEscape) == glfw.Press {
