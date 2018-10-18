@@ -440,7 +440,9 @@ func (c *Chip8) drawSprite(sprite []byte, x, y byte) bool {
 		if isByteAligned := x%8 == 0; isByteAligned {
 			offset := yOffset + xOffset
 			screenByte := c.screen[offset]
-			// TODO check for occlusion
+			// if spriteByte and screenByte have an active pixel in the same place,
+			// spriteByte occluded an active pixel.
+			occluded = spriteByte&screenByte != 0
 			c.screen[offset] = spriteByte ^ screenByte
 
 		} else {
@@ -451,8 +453,10 @@ func (c *Chip8) drawSprite(sprite []byte, x, y byte) bool {
 			rightOffset := yOffset + ((xOffset + 1) % 8)
 			screenLeftByte := c.screen[leftOffset]
 			screenRightByte := c.screen[rightOffset]
-
-			// TODO check for occlusion
+			// if spriteByte and screenByte have an active pixel in the same place,
+			// spriteByte occluded an active pixel.
+			occluded = spriteLeftByte&screenLeftByte != 0 ||
+				spriteRightByte&screenRightByte != 0
 			c.screen[leftOffset] = spriteLeftByte ^ screenLeftByte
 			c.screen[rightOffset] = spriteRightByte ^ screenRightByte
 		}
