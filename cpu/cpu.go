@@ -47,10 +47,8 @@ type Chip8 struct {
 	Log    bytes.Buffer
 	logger *log.Logger
 
-	speed int
-	stop  chan (struct{})
-	// FIXME comprehend this
-	clock         chan (time.Time)
+	speed         int
+	clock         *time.Ticker
 	isStoppedFlag bool
 
 	speaker Speaker
@@ -155,7 +153,7 @@ type Chip8State struct {
 // I've never even looked at any of these computers except online. I'm writing an emulator
 // for an interpreter that ran on forgotten hardware that was made twenty years before I was born.
 func (c *Chip8) ReadVideoMemory() []byte {
-	return c.memory[videoMemoryAddress : videoMemoryAddress+255]
+	return c.memory[videoMemoryAddress:highestMemoryAddress]
 }
 
 // ConnectKeyboard connects a hexadecimal keyboard input to the Chip8 CPU.
@@ -224,7 +222,8 @@ func (c *Chip8) Reset() {
 	c.sp = stackAddress
 	c.memory = [4096]byte{}
 
-	c.speed = 60 // number of instructions to execute per second
+	c.speed = 60                               // number of instructions to execute per second
+	c.clock = time.NewTicker(time.Second / 60) // Tick 60 times per second
 	c.Log = bytes.Buffer{}
 
 	// Chip8 begins life in stopped state.
@@ -247,13 +246,11 @@ func (c *Chip8) Start() {
 	if c.IsStopped() {
 		c.isStoppedFlag = false
 		// Run the CPU loop until CPU is stopped.
-		for {
-			select {
-			case <-c.stop:
-				return
-				//case <-c.clock:
-				//		c.cycle()
-			}
+		for !c.IsStopped() {
+			// wait for the clock to tick
+			<-c.clock.C
+			// decode and execute the next instruction
+			c.cycle()
 		}
 	}
 }
@@ -263,7 +260,6 @@ func (c *Chip8) Start() {
 // While the CPU is in a stopped state, further calls to Stop have no effect.
 func (c *Chip8) Stop() {
 	if !c.IsStopped() {
-		close(c.stop)
 		c.isStoppedFlag = true
 	}
 }
