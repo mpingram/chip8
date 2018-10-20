@@ -8,9 +8,29 @@ import (
 	"time"
 )
 
-const stackAddress uint16 = 0xEA0
-const videoMemoryAddress uint16 = 0xF00
-const highestMemoryAddress uint16 = 0xFFF
+// A KeyCode is a number that represents a key on the Chip-8 hexadecimal keyboard.
+// Only the numbers 0 through 16 (0x0 through 0xF) are valid KeyCodes.
+// KeyCode 0 indicates 'No Keypress', ie that no key is currently pressed.
+type KeyCode byte
+
+// KeyNone indicates 'No Keypresss', ie that no key is currently pressed.
+const (
+	KeyNone KeyCode = 0x00
+	Key1    KeyCode = 0x01
+	Key2    KeyCode = 0x02
+	Key3    KeyCode = 0x03
+	Key4    KeyCode = 0x04
+	Key5    KeyCode = 0x05
+	Key6    KeyCode = 0x06
+	Key7    KeyCode = 0x07
+	Key8    KeyCode = 0x08
+	Key9    KeyCode = 0x09
+	KeyA    KeyCode = 0x0a
+	KeyB    KeyCode = 0x0b
+	KeyC    KeyCode = 0x0c
+	KeyD    KeyCode = 0x0d
+	KeyF    KeyCode = 0x0f
+)
 
 // Chip8 represents an emulated Chip-8 CPU. Not that the Chip-8 was ever a real physical
 // computer with a CPU, but writing this emulator has taught me that sometimes it's fun to pretend.
@@ -51,38 +71,49 @@ type Chip8 struct {
 	clock         *time.Ticker
 	isStoppedFlag bool
 
-	speaker Speaker
-	input   Keyboard
+	speaker  Speaker
+	input    Keyboard
+	videoOut chan<- [256]byte
 }
 
-const eofInstruction = 0x0000
+// NewChip8 returns an initialized Chip8, ready to run
+// any programs you can get your hands on.
+// The Chip8 it returns will be in a stopped state and
+// has no program loaded into memory -- call the
+// Chip8.Run(program) method to run a program.
+//
+// It is probably confusing that NewChip8 asks for a keyboard
+// and a speaker but no display device. This implementation
+// of the Chip8 interpreter takes a very lazy approach to displaying
+// the screen: it provides direct read-only access to its video memory.
+// "If these kids want to see the screen, they can read the hex or get
+// off my lawn", this implementation says.
+func NewChip8(keyboard Keyboard, speaker Speaker, videoOut chan<- [256]byte) *Chip8 {
+	c := new(Chip8)
+	c.reset()
+	c.input = keyboard
+	c.speaker = speaker
+	c.videoOut = videoOut
+	return c
+}
+
+// Run loads a program into memory and executes it.
+//
+// This is the simplest way to run a program on the Chip8 CPU. Make sure that you
+// have set up a display set up to read the Chip8's video memory, or else you'll
+// see a black screen, just like if you forgot to plug in your TV in Real Life.
+func (c *Chip8) Run(program []byte) error {
+	c.reset()
+	err := c.load(program)
+	if err != nil {
+		return err
+	}
+	c.Resume()
+	return nil
+}
 
 // TODO add 'Compatibility mode'? for that one instruction that gets implemented in one
 // of two ways
-
-// A KeyCode is a number that represents a key on the Chip-8 hexadecimal keyboard.
-// Only the numbers 0 through 16 (0x0 through 0xF) are valid KeyCodes.
-// KeyCode 0 indicates 'No Keypress', ie that no key is currently pressed.
-type KeyCode byte
-
-// KeyNone indicates 'No Keypresss', ie that no key is currently pressed.
-const (
-	KeyNone KeyCode = 0x00
-	Key1    KeyCode = 0x01
-	Key2    KeyCode = 0x02
-	Key3    KeyCode = 0x03
-	Key4    KeyCode = 0x04
-	Key5    KeyCode = 0x05
-	Key6    KeyCode = 0x06
-	Key7    KeyCode = 0x07
-	Key8    KeyCode = 0x08
-	Key9    KeyCode = 0x09
-	KeyA    KeyCode = 0x0a
-	KeyB    KeyCode = 0x0b
-	KeyC    KeyCode = 0x0c
-	KeyD    KeyCode = 0x0d
-	KeyF    KeyCode = 0x0f
-)
 
 // The Keyboard inerface represents the Chip8 keyboard input.
 // It exposes a single Poll() method, which returns
@@ -111,11 +142,12 @@ type Speaker interface {
 
 // Chip8State represents a read-only snapshot of the internal state of the Chip-8 CPU and RAM.
 //
-// It copies the stack and video memory into their own fields for convenience, so you don't have
-// to know what the offsets are to figure out where the screen starts. But if you were curious,
-// the offsets are [xxx] for the start of the stack and [xxx] for the start of the video memory.
-// The Memory should contain both of them, even though they're copied into their own fields.
-//
+// It copies the stack and video memory into their own struct fields, even though
+// under the hood both the stack and the video memory live in the same 'Memory' byte array
+// with everything else.
+// This is for convenience, so you don't have to know what the offsets are to figure out
+// where the screen and stack start. (If you were curious, the offsets are 0xEA0 for the stack
+// and 0xF00 for the video memory.)
 type Chip8State struct {
 	PC            uint16
 	I             uint16
@@ -129,7 +161,7 @@ type Chip8State struct {
 	Speed         int
 }
 
-// ReadVideoMemory returns an array of 256 bytes that represent the 64x32px Chip8 screen
+// ReadVideoMemory returns an slice of 256 bytes that represent the 64x32px Chip8 screen
 // in an unfriendly, error-prone, low-level, and semi-authentic way.
 //
 // Every group of 8 bytes in the array represents one 64px row of the screen.
@@ -149,56 +181,16 @@ type Chip8State struct {
 // On the VIP, the video card had direct memory access to the section of the RAM that
 // contains the 256b of video memory that represents the screen: 60 times a second,
 // the video card read the video memory and converted it to electrical signals that the
-// CRT TV it was connected to could display. I think! So take it with a grain of salt.
-// I've never even looked at any of these computers except online. I'm writing an emulator
-// for an interpreter that ran on forgotten hardware that was made twenty years before I was born.
-func (c *Chip8) ReadVideoMemory() []byte {
-	return c.memory[videoMemoryAddress:highestMemoryAddress]
+// CRT TV it was connected to could display. I think! I've never even looked at any of
+// these computers except online.
+func (c *Chip8) refreshScreen() {
+	var screen [256]byte
+	copy(screen, c.memory[videoMemoryAddress:highestMemoryAddress]
+	c.videoOut <- screen
 }
 
-// ConnectKeyboard connects a hexadecimal keyboard input to the Chip8 CPU.
-//
-// The Chip8 cpu polls the input source for input state.
-// As I understand it, this mirrors how the COSMAC VIP (the original computer that the
-// Chip-8 interpreter was written for) handled input -- by polling,
-// instead of by interrupts. As I understand it! This is new territory for me.
-// I didn't even know what an interrupt was until yesterday.
-func (c *Chip8) ConnectKeyboard(keyboard Keyboard) {
-	c.input = keyboard
-}
-
-// ConnectSpeaker connects a Speaker to the Chip8 CPU. The Chip8 will
-// call the Speaker's StartSound() and StopSound() methods when instructed
-// by its programming.
-// (If the Chip8 rebels against its programming and
-// calls these methods on its own for fun, contact me.)
-func (c *Chip8) ConnectSpeaker(speaker Speaker) {
-	c.speaker = speaker
-}
-
-// Run loads a program into memory and executes it. It is a convenience method
-// for a sequence of calls to Reset() -> Load(program) -> Start().
-//
-// This is the simplest way to run a program on the Chip8 CPU. Make sure that you
-// have connected a display and an input to the CPU, or else you'll see a black
-// screen, just like if you forgot to plug in your TV in Real Life.
-func (c *Chip8) Run(program []byte) error {
-	c.Reset()
-	err := c.Load(program)
-	if err != nil {
-		return err
-	}
-	c.Start()
-	return nil
-}
-
-// Load takes a Chip8 program as input and loads the program into the Chip8 memory.
-// Load returns an error if the program exceeds [FIXME how many?] kb in length.
-// This is because the practical memory limit of the Chip8 is [FIXME xxx] kb. (The total
-// memory is [FIXME yyy] kb with the first 0x1FF bytes traditionally reserved for the
-// Chip8 interpreter code, the built-in decimal digit sprites, and the video memory.)
-//
-func (c *Chip8) Load(program []byte) error {
+// load takes a Chip8 program as input and loads the program into the Chip8 memory.
+func (c *Chip8) load(program []byte) error {
 	// load program into memory
 	var programStartAddr = 0x200
 	for i, b := range program {
@@ -207,13 +199,13 @@ func (c *Chip8) Load(program []byte) error {
 	return nil
 }
 
-// Reset clears the Chip8 memory and resets the Chip8 cpu to its starting state.
-// After the Reset method is called, the Chip8 will be in a paused state and will have
+// reset clears the Chip8 memory and resets the Chip8 cpu to its starting state.
+// After the reset method is called, the Chip8 will be in a paused state and will have
 // no program loaded.
 //
-// Any Input or Speaker connected to the Chip8 using connectInput() or connectSpeaker()
-// remains connected to the Chip8 instance after Reset() is called.
-func (c *Chip8) Reset() {
+// Any input or speaker connected to the Chip8 remains connected to the Chip8 instance
+// after reset() is called.
+func (c *Chip8) reset() {
 	// set all properties of Chip8 struct to default values
 	c.i = 0x00
 	c.v = [16]byte{}
@@ -239,35 +231,40 @@ func (c *Chip8) Reset() {
 	loadFontSprites(&c.memory, 0x0)
 }
 
-// Start commences or resumes execution of a program that is already loaded into the Chip8 memory.
-// While the CPU is in a running state, further calls to Start have no effect.
-func (c *Chip8) Start() {
+// Resume puts the Chip8 back into a running state after the Chip8 has
+// been halted (by calling -- you guessed it -- Halt()).
+// If the Chip8 is in a running state, calls to Resume have no effect.
+func (c *Chip8) Resume() {
 	// Only begin the CPU loop if Chip8 CPU is currently stopped.
-	if c.IsStopped() {
+	if !c.IsRunning() {
 		c.isStoppedFlag = false
-		// Run the CPU loop until CPU is stopped.
-		for !c.IsStopped() {
+		// While the Chip8 is in 'running' state,
+		// Run the CPU loop. Exit the loop once
+		// the Chip8 exits running state.
+		for c.IsRunning() {
 			// wait for the clock to tick
 			<-c.clock.C
 			// decode and execute the next instruction
 			c.cycle()
+			// TODO CONSIDER add 'err' and/or 'finished' here,
+			// to make sequence of control simpler.
 		}
 	}
 }
 
-// Stop halts the Chip8 CPU after the currently executing instruction finishes.
-// To resume a stopped Chip8, call its Start() method.
+// Halt pauses a running Chip8 CPU after the currently executing instruction finishes.
+// To resume a stopped Chip8, call its Resume() method.
 // While the CPU is in a stopped state, further calls to Stop have no effect.
-func (c *Chip8) Stop() {
-	if !c.IsStopped() {
+func (c *Chip8) Halt() {
+	if c.IsRunning() {
 		c.isStoppedFlag = true
 	}
 }
 
-// IsStopped returns true if the Chip8 CPU is in a stopped state
-// and false if the Chip8 CPU is in a running state.
-func (c *Chip8) IsStopped() bool {
-	return c.isStoppedFlag
+// IsRunning returns true if the Chip8 CPU is in a running state
+// and false if the Chip8 CPU is in a halted state.
+func (c *Chip8) IsRunning() bool {
+	return !c.isStoppedFlag
 }
 
 // Step executes the next instruction in its entirety and then pauses the Chip8 CPU.
@@ -280,7 +277,9 @@ func (c *Chip8) IsStopped() bool {
 // the Chip8 CPU.
 func (c *Chip8) Step() {
 	// stop CPU if currently running
-	c.Stop()
+	if c.IsRunning() {
+		c.Halt()
+	}
 	// do one cycle
 	c.cycle()
 }
@@ -304,7 +303,7 @@ func (c *Chip8) cycle() {
 	// execute next instruction in program.
 	opcode := c.readOpcode(c.pc)
 	if opcode == eofInstruction {
-		c.Stop()
+		c.Halt()
 	} else {
 		// exec will handle incrementing and/or moving the program counter.
 		c.exec(opcode)
@@ -325,6 +324,11 @@ func (c *Chip8) Snapshot() Chip8State {
 		VideoMemory:   c.memory[videoMemoryAddress:highestMemoryAddress],
 		Speed:         c.speed}
 }
+
+const stackAddress uint16 = 0xEA0
+const videoMemoryAddress uint16 = 0xF00
+const highestMemoryAddress uint16 = 0xFFF
+const eofInstruction = 0x0000
 
 func loadFontSprites(memory *[4096]byte, startAddress int) {
 	fontSpriteData := [16 * 5]byte{
